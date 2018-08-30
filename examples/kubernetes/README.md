@@ -104,6 +104,7 @@ kubectl create secret generic ceph-conf-combined --from-file=ceph.conf --from-fi
 kubectl create secret generic ceph-bootstrap-rgw-keyring --from-file=ceph.keyring=ceph.rgw.keyring --namespace=ceph
 kubectl create secret generic ceph-bootstrap-mds-keyring --from-file=ceph.keyring=ceph.mds.keyring --namespace=ceph
 kubectl create secret generic ceph-bootstrap-osd-keyring --from-file=ceph.keyring=ceph.osd.keyring --namespace=ceph
+kubectl create secret generic ceph-bootstrap-rbd-keyring --from-file=ceph.keyring=ceph.rbd.keyring --namespace=ceph
 kubectl create secret generic ceph-client-key --from-file=ceph-client-key --namespace=ceph
 
 cd ..
@@ -196,7 +197,7 @@ kubectl create -f ceph-osd-activate-v1-ds.yaml --namespace=ceph
 First, create a RBD provisioner pod:
 
 ```
-$ kubectl create -f https://raw.githubusercontent.com/kubernetes-incubator/external-storage/master/ceph/rbd/deployment.yaml --namespace=ceph
+$ kubectl create -f https://raw.githubusercontent.com/kubernetes-incubator/external-storage/master/ceph/rbd/deploy/non-rbac/deployment.yaml --namespace=ceph
 ```
 Then, if there is no Ceph admin secret with type `kubernetes.io/rbd`, create one:
 
@@ -217,6 +218,9 @@ parameters:
     adminId: admin
     adminSecretName: ceph-secret-admin
     adminSecretNamespace: "ceph"
+    userId: admin
+    userSecretName: ceph-secret-admin # must be present in claim namespace
+    pool: hddpool # ceph osd pool to map this class to
 ```
 
 Now, try create a claim:

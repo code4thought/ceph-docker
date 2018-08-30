@@ -1,79 +1,110 @@
-# docker-ceph
+ceph-container
+==============
 
-Ceph-related Docker files.
+![Ceph Daemon Stars](https://img.shields.io/docker/stars/ceph/daemon.svg)
+![Ceph Daemon Pulls](https://img.shields.io/docker/pulls/ceph/daemon.svg)
 
-## Core Components:
+Build Ceph into container images with upstream support for the latest few Ceph
+releases on Centos ceph-container also supports builds for multiple
+distributions.
 
-- [`ceph/base`](ceph-releases/jewel/ubuntu/14.04/base/): Ceph base container image. This is nothing but a fresh install of the latest Ceph + Ganesha on Ubuntu LTS (14.04)
-- [`ceph/daemon`](ceph-releases/jewel/ubuntu/14.04/daemon/): All-in-one container for all core daemons.
+
+Find available container image tags
+-----------------------------------
+
+All tags can be found on the Docker Hub.
+For the daemon-base tags [visit](https://hub.docker.com/r/ceph/daemon-base/tags/).
+For the daemon tags [visit](https://hub.docker.com/r/ceph/daemon/tags/).
+
+Alternatively, you can run the following command (install jq first):
+
+```
+$ curl -s https://registry.hub.docker.com/v2/repositories/ceph/daemon/tags/ | jq '."results"[] .name'
+```
+
+Be careful, by default the Docker API returns the first page with its 10 elements.
+To improve your `curl` you can pass the `https://registry.hub.docker.com/v2/repositories/ceph/daemon/tags/?page=2`
+
+Stable images
+-------------
+Since everyone doesn't use Docker Hub API and Docker Hub WebUI doesn't paginate. It's hard to see all available stable images.
+
+` Starting August 22th 2018, Ubuntu images are no longer supported.
+Only OpenSuse and Centos images will be shipped.`
+
+Here is a list of available stable Ceph images
+
+```
+ceph/daemon:v3.0.5-stable-3.0-luminous-centos-7
+ceph/daemon:v3.0.5-stable-3.0-jewel-centos-7-x86_64
+ceph/daemon:v3.0.5-stable-3.0-kraken-centos-7-x86_64
+ceph/daemon:v3.0.5-stable-3.0-luminous-centos-7-x86_64
+ceph/daemon:v3.0.5-stable-3.0-luminous-centos-7-aarch64
+ceph/daemon:v3.0.3-stable-3.0-jewel-centos-7-x86_64
+ceph/daemon:v3.0.3-stable-3.0-luminous-centos-7-x86_64
+ceph/daemon:v3.0.3-stable-3.0-kraken-centos-7-x86_64
+ceph/daemon:v3.0.2-stable-3.0-kraken-centos-7-x86_64
+ceph/daemon:v3.0.2-stable-3.0-luminous-centos-7-x86_64
+ceph/daemon:v3.0.2-stable-3.0-jewel-centos-7-x86_64
+ceph/daemon:v3.0.1-stable-3.0-kraken-centos-7-x86_64
+ceph/daemon:v3.0.1-stable-3.0-luminous-centos-7-x86_64
+ceph/daemon:v3.0.1-stable-3.0-jewel-centos-7-x86_64
+ceph/daemon:tag-stable-3.0-luminous-centos-7
+ceph/daemon:tag-stable-3.0-jewel-centos-7
+```
+
+Core Components
+---------------
+
+- [`ceph/daemon-base`](src/daemon-base/): Base container image containing Ceph core components.
+- [`ceph/daemon`](src/daemon/): All-in-one container containing all Ceph daemons.
 
 See README files in subdirectories for instructions on using containers.
 
-## Demo
 
-- [`ceph/demo`](ceph-releases/jewel/ubuntu/14.04/demo/): Demonstration cluster for testing and learning. This container runs all the major ceph and ganesha components installed, bootstrapped, and executed for you to play with. (not intended for use in building a production cluster)
+Building ceph-container
+-----------------------
+`make` is used for ceph-container builds. See `make help` for all make options.
 
-# How to contribute?!
+### Specifying flavors for make
+The `make` tooling allows the environment variable `FLAVORS` to be optionally set by the user to
+define which flavors to operate on. Flavor specifications follow a strict format that declares what
+Ceph version to build and what container image to use as the base for the build. See `make help` for
+a full description.
 
-The following assumes that you already forked the repository, added the correct remote and are familiar with git commands.
+### Building a single flavor
+Once the flavor is selected, specify its name in the `FLAVORS` environment variable and call the
+`build` target:
+```
+make FLAVORS=luminous,centos,7 build
+```
 
-## Prepare your development environment
+### Building multiple flavors
+Multiple flavors are specified by separating each flavor by a space and surrounding the entire
+specification in quotes and built the same as a single flavor:
+```
+make FLAVORS="luminous,centos,7 kraken,opensuse,42.3"  build
+```
 
-Simply execute `./generate-dev-env.sh CEPH_RELEASE DISTRO DISTRO_VERSION`. For example if you run `./generate-dev-env.sh jewel ubuntu 16.04` the script will:
+Flavors can be built in parallel easily with the `build.parallel` target:
+```
+make FLAVORS="<flavor> <other flavor> <...>" build.parallel
+```
 
-- hardlink the files from `ceph-releases/jewel/ubuntu/16.04/{base,daemon,demo}` in `./base`, `./daemon` and `./demo`.
-- create a file in `{base,daemon,demo}/SOURCE_TREE` which will remind you the version you are working on.
+### Building with a specific version of Ceph
+Some distributions can select a specific version of Ceph to install.
+You just have to append the required version to the ceph release code name.
 
-From this, you can start modifying your code and building your images locally.
+The required version will be saved in `CEPH_POINT_RELEASE` variable (including the version separator).
+The version separator is usually a dash ('-') or an equal sign ('=').
+`CEPH_POINT_RELEASE` remains empty if no point release is given.
 
-## My code is ready, what's next?
+Note that `CEPH_VERSION` variable still feature the ceph code name, **luminous** in this example.
 
-Contributions must go in the 'ceph-releases' tree, in the appropriate Ceph version, distribution and distribution version. So once you are done, we can just run:
+```
+make FLAVORS=luminous-12.2.2,centos,7 build
+```
 
-- `cp -av base $(cat base/SOURCE_TREE)`
-- `cp -av daemon $(cat base/SOURCE_TREE)`
-- `cp -av demo $(cat base/SOURCE_TREE)`
+## Presentations
 
-We identified 2 types of contributions:
-
-### Distro specific contributions
-
-The code only changes the `base` image content of a specific distro, nothing to replicate or change for the other images..
-
-### New functionality contributions
-
-If you look at the ceph-releases directory you will notice that for each release the daemon image's content is symlinked to the Ubuntu daemon 14.04. Even if we support multi-distro, Ubuntu 14.04 remains the default. It would nice if you could get familiar with this approach. This basically means that if you are testing on CentOS then you should update the Ubuntu image instead. All the changes in the entrypoints _should not_ diverse from one distro to another, so this should be safe :). We are currently **only** bringing new functionality in the `jewel` release.
-
-# CI
-
-We use Travis to run several tests on each pull request:
-
-- we build both `base` and `daemon` images
-- we run all the ceph processes in a container based on the images we just built
-- we execute a validation script at the end to make sure Ceph is healthy
-
-For each PR, we try to detect which Ceph release is being impacted. Since we can only produce a single CI build with Travis, ideally this change will only be on a single release and distro. If we have multiple ceph release and distro, we can only test one, since we have to build `base` and `daemon`. By default, we just pick up the first line that comes from the changes.
-
-You can check the files in `travis-builds` to learn more about the entire process.
-
-If you don't want to run a build for a particular commit, because all you are changing is the README for example, add `[ci skip]` to the git commit message. Commits that have `[ci skip]` anywhere in the commit messages are ignored by Travis CI.
-
-We are also transitioning to have builds in Jenkins, this is still a work in
-progress and will start taking precedence once it is solid enough. Be sure to
-check the links and updates provided on pull requests.
-
-# Images workflow
-
-Once your contribution is done and merged in master. Either @Ulexus or @leseb will execute `ceph-docker-workflow.sh`, this will basically compare the content of each tag/branch to master. If any difference is found it will push the appropriate changes in each individual branches. Ultimately new pushed tags will trigger a Docker build on the Docker Hub.
-
-# Video demonstration
-
-## Manually
-
-A recorded video on how to deploy your Ceph cluster entirely in Docker containers is available here:
-
-[![Demo Running Ceph in Docker containers](http://img.youtube.com/vi/FUSTjTBA8f8/0.jpg)](http://youtu.be/FUSTjTBA8f8 "Demo Running Ceph in Docker containers")
-
-## With Ansible
-
-[![Demo Running Ceph in Docker containers with Ansible](http://img.youtube.com/vi/DQYZU1VsqXc/0.jpg)](http://youtu.be/DQYZU1VsqXc "Demo Running Ceph in Docker containers with Ansible")
+<p><a href="https://docs.google.com/presentation/d/e/2PACX-1vQsN2ywxSibTSH-p-0PpNWpKTSfSSLx3gApetKzmuLiMwKm0Sk9mg-Swnae-m5tKkHwCGULDfFOJsvJ/pub?start=false&loop=false&delayms=3000"> Restructuring ceph-container </a></p>

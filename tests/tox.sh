@@ -12,91 +12,116 @@ set -ex
 # setup
 #################################################################################
 # If WORKSPACE is undefined, set it to $TOXINIDIR
-echo ${WORKSPACE:=$TOXINIDIR}
+echo "${WORKSPACE:=$TOXINIDIR}"
 
 # Write down a couple environment variables, for use in teardown
 OUR_TOX_VARS=$WORKSPACE/.tox_vars
-rm -f $OUR_TOX_VARS
-cat > $OUR_TOX_VARS << EOF
+rm -f "$OUR_TOX_VARS"
+cat > "$OUR_TOX_VARS" << EOF
 export WORKSPACE=$WORKSPACE
 export CEPH_ANSIBLE_SCENARIO_PATH=$CEPH_ANSIBLE_SCENARIO_PATH
 EOF
 
 # Check distro and install deps
 if command -v apt-get &>/dev/null; then
-    sudo apt-get install -y --force-yes docker.io
-    sudo apt-get install -y --force-yes xfsprogs
-  else
-    sudo yum install -y docker
-    sudo yum install -y xfsprogs
-    if ! systemctl status docker >/dev/null; then
-      # daemon doesn't start automatically after being installed
-      sudo systemctl restart docker
-    fi
-    # Allow running `docker` without sudo
-    sudo chgrp "$(whoami)" /var/run/docker.sock
+  sudo apt-get install -y --force-yes docker.io xfsprogs python3.6
+  sudo ln -sf "$(command -v python3.6)" /usr/bin/python3
+else
+  sudo yum install -y docker xfsprogs
+  if ! command -v python3.6 &>/dev/null; then
+    sudo yum -y groupinstall development
+    sudo yum -y install https://centos7.iuscommunity.org/ius-release.rpm
+    sudo yum -y install python36u
+  fi
+  sudo ln -sf "$(command -v python3.6)" /usr/bin/python3
+
+  if ! systemctl status docker >/dev/null; then
+    # daemon doesn't start automatically after being installed
+    sudo systemctl restart docker
+  fi
+  # Allow running `docker` without sudo
+  sudo chgrp "$(whoami)" /var/run/docker.sock
 fi
 
 rm -rf "$WORKSPACE"/ceph-ansible || true
-git clone -b $CEPH_ANSIBLE_BRANCH --single-branch https://github.com/ceph/ceph-ansible.git ceph-ansible
-pip install -r $TOXINIDIR/ceph-ansible/tests/requirements.txt
+git clone -b "$CEPH_ANSIBLE_BRANCH" --single-branch https://github.com/ceph/ceph-ansible.git ceph-ansible
 
-# pull requests tests should never have these directories here, but branches
-# do, so for the build scripts to work correctly, these neeed to be removed
-# XXX It requires sudo because these will appear with `root` ownership
-rm -rf "$WORKSPACE"/{daemon,demo,base}
+pip install -r "$TOXINIDIR"/ceph-ansible/tests/requirements.txt
 
 bash "$WORKSPACE"/travis-builds/purge_cluster.sh
 # XXX purge_cluster only stops containers, it doesn't really remove them so try to
 # remove them for real
-containers_to_remove=$(docker ps -a -q)
+containers_to_remove=$(sudo docker ps -a -q)
 
 if [ "${containers_to_remove}" ]; then
-    docker rm -f $@ ${containers_to_remove} || echo failed to remove containers
+  sudo docker rm -f "$@" "${containers_to_remove}" || echo failed to remove containers
 fi
 
-# copy the files to the root for the
-# types of images we're going to build
-mkdir -p {base,daemon,demo}
-# starting with kraken, the base image does not exist
-cp -Lrv ceph-releases/$CEPH_STABLE_RELEASE/$IMAGE_DISTRO/base/* base || true
-cp -Lrv ceph-releases/$CEPH_STABLE_RELEASE/$IMAGE_DISTRO/daemon/* daemon
-cp -Lrv ceph-releases/$CEPH_STABLE_RELEASE/$IMAGE_DISTRO/demo/* demo || true
+cd "$WORKSPACE"
+# we test the latest stable release of Ceph in priority
+FLAVOR="mimic,centos,7"
 
-bash "$WORKSPACE"/travis-builds/build_imgs.sh
+# build everything that was touched to make sure build succeeds
+mapfile -t FLAVOR_ARRAY < <(sudo make flavors.modified)
+
+if [[ "$NIGHTLY" != 'TRUE' ]]; then
+  if [[ "${#FLAVOR_ARRAY[@]}" -eq "0" ]]; then
+    echo "The ceph-container code has not changed."
+    echo "Nothing to test here."
+    echo "SUCCESS"
+    sudo make clean.all
+    exit 0
+  fi
+
+  if [[ "${#FLAVOR_ARRAY[@]}" -eq "1" ]]; then
+    FLAVOR="${FLAVOR_ARRAY[0]}"
+  fi
+fi
+
+CURRENT_CEPH_STABLE_RELEASE="$(echo $FLAVOR|awk -F ',' '{ print $1}')"
+
+# CEPH_STABLE_RELEASE is an info passed by the CI (see tox.ini)
+# if CEPH_STABLE_RELEASE does not match CURRENT_CEPH_STABLE_RELEASE then CEPH_STABLE_RELEASE wins
+# so we will build the desired CEPH_STABLE_RELEASE since the current patch didn't change the Ceph version
+# Since we test all the Ceph releases, we will always test the impacted one
+if [[ "$CEPH_STABLE_RELEASE" != "$CURRENT_CEPH_STABLE_RELEASE" ]]; then
+  FLAVOR="$CEPH_STABLE_RELEASE,centos,7"
+fi
+
+echo "Building flavor $FLAVOR"
+make_output=$(sudo make FLAVORS="$FLAVOR" stage) # Run staging to get DAEMON_IMAGE name
+daemon_image=$(echo "${make_output}" | grep " DAEMON_IMAGE ") # Find DAEMON_IMAGE line
+daemon_image="${daemon_image#*DAEMON_IMAGE*: }" # Remove DAEMON_IMAGE from beginning
+daemon_image="$(echo "${daemon_image}" | tr -s ' ')" # Remove whitespace
+sudo make FLAVORS="$FLAVOR" build.parallel
 
 # start a local docker registry
-docker run -d -p 5000:5000 --restart=always --name registry registry:2
+sudo docker run -d -p 5000:5000 --restart=always --name registry registry:2
 # add the image we just built to the registry
-docker tag ceph/daemon localhost:5000/ceph/daemon:$CEPH_STABLE_RELEASE-latest
+sudo docker tag "${daemon_image}" localhost:5000/ceph/daemon:"$CEPH_STABLE_RELEASE"-latest
 # this avoids a race condition between the tagging and the push
 # which causes this to sometimes fail when run by jenkins
 sleep 1
-docker --debug push localhost:5000/ceph/daemon:$CEPH_STABLE_RELEASE-latest
+sudo docker --debug push localhost:5000/ceph/daemon:"$CEPH_STABLE_RELEASE"-latest
 
-# test
-#################################################################################
-
-# TODO: get the output image from build_imgs.sh to pass onto ceph-ansible
-
-# run vagrant and ceph-ansible tests
-#################################################################################
 cd "$CEPH_ANSIBLE_SCENARIO_PATH"
-vagrant up --no-provision --provider=$VAGRANT_PROVIDER
+vagrant up --no-provision --provider="$VAGRANT_PROVIDER"
 
-bash $TOXINIDIR/ceph-ansible/tests/scripts/generate_ssh_config.sh $CEPH_ANSIBLE_SCENARIO_PATH
+bash "$TOXINIDIR"/ceph-ansible/tests/scripts/generate_ssh_config.sh "$CEPH_ANSIBLE_SCENARIO_PATH"
 
 export ANSIBLE_SSH_ARGS="-F $CEPH_ANSIBLE_SCENARIO_PATH/vagrant_ssh_config"
 
 
 # runs a playbook to configure nodes for testing
-ansible-playbook -vv -i $CEPH_ANSIBLE_SCENARIO_PATH/hosts $TOXINIDIR/tests/setup.yml
-ansible-playbook -vv -i $CEPH_ANSIBLE_SCENARIO_PATH/hosts $TOXINIDIR/ceph-ansible/site-docker.yml.sample --extra-vars="ceph_stable_release=$CEPH_STABLE_RELEASE ceph_docker_image_tag=$CEPH_STABLE_RELEASE-latest ceph_docker_registry=$REGISTRY_ADDRESS fetch_directory=$CEPH_ANSIBLE_SCENARIO_PATH/fetch"
+ansible-playbook -vv -i "$CEPH_ANSIBLE_SCENARIO_PATH"/hosts "$TOXINIDIR"/tests/setup.yml
+ansible-playbook -vv -i "$CEPH_ANSIBLE_SCENARIO_PATH"/hosts "$TOXINIDIR"/ceph-ansible/site-docker.yml.sample --extra-vars="ceph_stable_release=$CEPH_STABLE_RELEASE ceph_docker_image_tag=$CEPH_STABLE_RELEASE-latest ceph_docker_registry=$REGISTRY_ADDRESS fetch_directory=$CEPH_ANSIBLE_SCENARIO_PATH/fetch"
 
-ansible-playbook -vv -i $CEPH_ANSIBLE_SCENARIO_PATH/hosts $TOXINIDIR/ceph-ansible/tests/functional/setup.yml
+ansible-playbook -vv -i "$CEPH_ANSIBLE_SCENARIO_PATH"/hosts "$TOXINIDIR"/ceph-ansible/tests/functional/setup.yml
 
-testinfra -n 4 --sudo -v --connection=ansible --ansible-inventory=$CEPH_ANSIBLE_SCENARIO_PATH/hosts $TOXINIDIR/ceph-ansible/tests/functional/tests
+testinfra -n 4 --sudo -v --connection=ansible --ansible-inventory="$CEPH_ANSIBLE_SCENARIO_PATH"/hosts "$TOXINIDIR"/ceph-ansible/tests/functional/tests
 
 # teardown
 #################################################################################
-bash $TOXINIDIR/tests/teardown.sh
+cd "$WORKSPACE"
+sudo make clean.all
+bash "$TOXINIDIR"/tests/teardown.sh

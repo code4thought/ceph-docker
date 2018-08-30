@@ -13,8 +13,7 @@ def pytest_runtest_logreport(report):
         try:
             client = docker.Client('unix://var/run/docker.sock', version="auto")
         except DockerException as e:
-            raise pytest.UsageError(
-                    "Could not connect to a running docker socket: %s" % str(e))
+            raise pytest.UsageError("Could not connect to a running docker socket: %s" % str(e))
 
         test_containers = client.containers(
             all=True,
@@ -67,13 +66,12 @@ def generate_ips(start_ip, end_ip=None, offset=None):
         end = list(map(int, end_ip.split(".")))
     temp = start
 
-
     while temp != end:
         start[3] += 1
         for i in (3, 2, 1):
             if temp[i] == 256:
                 temp[i] = 0
-                temp[i-1] += 1
+                temp[i - 1] += 1
         ip_range.append(".".join(map(str, temp)))
 
     return ip_range
@@ -94,7 +92,7 @@ def start_container(client, container, container_network):
     """
     try:
         client.start(container=container["Id"])
-    except Exception as err:
+    except Exception:
         teardown_container(client, container, container_network)
         raise
     else:
@@ -104,9 +102,9 @@ def start_container(client, container, container_network):
                 return container
 
         if client.inspect_container(container)['State']['ExitCode'] > 0:
-            print "[ERROR][setup] failed to setup container for %s" %  request.param
+            print("[ERROR][setup] failed to setup container")
             for line in client.logs(container, stream=True):
-                print "[ERROR][setup]", line.strip('\n')
+                print("[ERROR][setup] {}".format(line.strip('\n')))
             raise RuntimeError()
 
         # if it has been longer than 0.5s and the container didn't get
@@ -160,9 +158,11 @@ def create_mon_container(client, container_tag):
     )
 
     # now map it as part of the networking configuration
-    networking_config = client.create_networking_config({
-		'pytest_monitor': client.create_endpoint_config(ipv4_address=container_ip)
-	})
+    networking_config = client.create_networking_config(
+        {
+            'pytest_monitor': client.create_endpoint_config(ipv4_address=container_ip)
+        }
+    )
 
     # "create" the container, which really doesn't create an actual image, it
     # basically constructs the object needed to start one. This is a 2-step
@@ -188,8 +188,8 @@ def run(client):
         result = client.exec_start(created_command)
         exit_code = client.exec_inspect(created_command)['ExitCode']
         if exit_code != 0:
-            msg = 'Non-zero exit code (%d) for command: %s' % (command, exit_status)
-            raise AssertionError(result), msg
+            msg = 'Non-zero exit code (%d) for command: %s' % (exit_code, command)
+            raise(AssertionError(result), msg)
         return result
     return run_command
 
@@ -201,17 +201,12 @@ def client():
         c.run = run(c)
         return c
     except DockerException as e:
-        raise pytest.UsageError(
-                "Could not connect to a running docker socket: %s" % str(e))
+        raise pytest.UsageError("Could not connect to a running docker socket: %s" % str(e))
+
 
 container_tags = [
     'ceph/daemon:tag-build-master-infernalis-centos-7',
     'ceph/daemon:tag-build-master-jewel-centos-7',
-    'ceph/daemon:tag-build-master-infernalis-ubuntu-16.04',
-    'ceph/daemon:tag-build-master-jewel-ubuntu-16.04',
-    'ceph/daemon:tag-build-master-infernalis-ubuntu-14.04',
-    'ceph/daemon:tag-build-master-jewel-ubuntu-14.04',
-    'ceph/daemon:tag-build-master-jewel-fedora-24'
 ]
 
 jewel_tags = [t for t in container_tags if 'jewel' in t]
